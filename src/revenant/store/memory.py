@@ -7,10 +7,14 @@ against the process actually dying.
 
 That is the right trade for the sweep in ``scripts/sweep.py``, which runs one
 scenario per journal boundary across every workflow and would otherwise pay an
-fsync per append on each of them (~150x slower here, which turns a 6-second
-check into something nobody runs). The claim that a *real* process death is
-survivable is made by ``tests/test_crash_process.py``, which forks an actual
-interpreter, kills it with SIGKILL, and recovers from the SQLite journal.
+fsync per append on each of them. Measured (``scripts/bench.py``): 223,869
+appends/s here against 1,259 on a durable journal, so the 140-scenario sweep
+takes 0.10 s instead of roughly 2 s. A 20x slower check is a check that stops
+being run while developing, which is when it catches things.
+
+The claim that a *real* process death is survivable is made separately, by
+``tests/test_crash_process.py``: it kills an actual interpreter mid-effect and
+recovers from the SQLite journal and a file-backed sink.
 
 Keeping both and being clear about which proves what is the point; a single
 store would have forced a choice between a fast sweep and a believable one.

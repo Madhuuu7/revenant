@@ -14,15 +14,18 @@ Two pragmas carry the durability claim and are worth being able to defend:
 ``synchronous=FULL``
     The WAL is fsynced on every commit. With the default ``NORMAL``, a commit
     is durable against the *process* dying but not against the machine losing
-    power -- which would make this project's central claim depend on the
-    failure mode. FULL costs a sync per event; measured on this machine that
-    is the difference between ~3.4k and ~310 appends/second, and 310/s is
-    irrelevant for agent runs that make tens of events each.
+    power -- which would make this project's central claim depend on which
+    failure happened. FULL costs a sync per event: 1,259 appends/s against
+    13,740 at NORMAL on this machine (``scripts/bench.py``), so 0.79 ms per
+    event instead of 0.07 ms. That is 11x, and it is the right trade here --
+    an agent run is tens of events, so the whole run spends about 16 ms in
+    fsync, while the alternative is a durability claim with an asterisk.
 """
 
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -57,7 +60,15 @@ class SqliteJournal(Journal):
 
     def __init__(self, path: str | Path = "revenant.db", *, synchronous: str = "FULL"):
         self.path = str(path)
-        self._conn = sqlite3.connect(self.path, isolation_level=None, timeout=30.0)
+        # FastAPI runs sync endpoints in a threadpool, so the connection is
+        # reached from more than one thread. check_same_thread=False allows
+        # that; the lock below is what actually makes it safe, since sqlite3
+        # serialises statements but not the BEGIN/INSERT/COMMIT sequence an
+        # append is made of.
+        self._conn = sqlite3.connect(
+            self.path, isolation_level=None, timeout=30.0, check_same_thread=False
+        )
+        self._lock = threading.RLock()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(f"PRAGMA synchronous={synchronous}")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -68,6 +79,12 @@ class SqliteJournal(Journal):
     def append(self, run_id: str, event: Event, expected_seq: int) -> Event:
         stamped = type(event)(**{**event.payload(), "seq": expected_seq})
         now = int(time.time() * 1000)
+        with self._lock:
+            return self._append_locked(run_id, stamped, expected_seq, now)
+
+    def _append_locked(
+        self, run_id: str, stamped: Event, expected_seq: int, now: int
+    ) -> Event:
         try:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
@@ -118,31 +135,35 @@ class SqliteJournal(Journal):
     # -- reads ----------------------------------------------------------
 
     def read(self, run_id: str) -> list[Event]:
-        rows = self._conn.execute(
-            "SELECT body FROM events WHERE run_id = ? ORDER BY seq", (run_id,)
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT body FROM events WHERE run_id = ? ORDER BY seq", (run_id,)
+            ).fetchall()
         return [decode(r[0]) for r in rows]
 
     def last_seq(self, run_id: str) -> int:
-        row = self._conn.execute(
-            "SELECT MAX(seq) FROM events WHERE run_id = ?", (run_id,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(seq) FROM events WHERE run_id = ?", (run_id,)
+            ).fetchone()
         return int(row[0] or 0)
 
     def runs(self, limit: int = 100) -> list[RunSummary]:
-        rows = self._conn.execute(
-            "SELECT run_id, workflow, status, events, created_ms, updated_ms"
-            " FROM runs ORDER BY updated_ms DESC, run_id LIMIT ?",
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT run_id, workflow, status, events, created_ms, updated_ms"
+                " FROM runs ORDER BY updated_ms DESC, run_id LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [RunSummary(*r) for r in rows]
 
     def summary(self, run_id: str) -> RunSummary | None:
-        row = self._conn.execute(
-            "SELECT run_id, workflow, status, events, created_ms, updated_ms"
-            " FROM runs WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT run_id, workflow, status, events, created_ms, updated_ms"
+                " FROM runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
         return RunSummary(*row) if row else None
 
     def rebuild_index(self) -> int:
@@ -154,6 +175,10 @@ class SqliteJournal(Journal):
         the log" into something checked rather than assumed. It is also the
         repair path if a future migration touches the events table directly.
         """
+        with self._lock:
+            return self._rebuild_locked()
+
+    def _rebuild_locked(self) -> int:
         run_ids = [
             r[0] for r in self._conn.execute("SELECT DISTINCT run_id FROM events")
         ]
@@ -192,4 +217,5 @@ class SqliteJournal(Journal):
         return len(run_ids)
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
