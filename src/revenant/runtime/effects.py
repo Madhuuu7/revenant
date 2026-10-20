@@ -124,6 +124,81 @@ class LedgerSink(EffectSink):
         return sum(self.applied.values())
 
 
+class SqliteSink(EffectSink):
+    """An idempotent sink that survives the process, for the kill test.
+
+    ``LedgerSink`` lives in memory, so it can only prove dedupe within one
+    interpreter -- and the interesting case is a process that *died* after
+    publishing. This sink is the same contract backed by a file: a UNIQUE
+    constraint on the idempotency key, an ``INSERT`` that either wins or
+    raises, and the stored result returned on a duplicate.
+
+    That is also what a correct real sink looks like. ``INSERT ... ON CONFLICT
+    DO NOTHING`` on a unique column is the entire mechanism behind Stripe's
+    ``Idempotency-Key`` header and behind SES deduplication ids; the only
+    difference is whose database it is.
+    """
+
+    def __init__(
+        self,
+        path: str,
+        handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
+    ):
+        import sqlite3
+
+        self.path = path
+        self.handlers = dict(handlers or {})
+        self._conn = sqlite3.connect(path, isolation_level=None, timeout=30.0)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=FULL")
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS applied ("
+            " key TEXT PRIMARY KEY, effect TEXT NOT NULL, result TEXT NOT NULL)"
+        )
+
+    def publish(self, key: str, effect: str, args: dict[str, Any]) -> EffectOutcome:
+        import json
+        import sqlite3
+
+        row = self._conn.execute(
+            "SELECT result FROM applied WHERE key = ?", (key,)
+        ).fetchone()
+        if row is not None:
+            return EffectOutcome(result=json.loads(row[0]), deduplicated=True)
+
+        handler = self.handlers.get(effect)
+        if handler is None:
+            raise EffectError(f"no handler for effect {effect!r}", permanent=True)
+        result = handler(dict(args))
+        try:
+            self._conn.execute(
+                "INSERT INTO applied (key, effect, result) VALUES (?, ?, ?)",
+                (key, effect, json.dumps(result, sort_keys=True)),
+            )
+        except sqlite3.IntegrityError:
+            # Another worker got there between the SELECT and the INSERT. The
+            # key is what resolves it, not a lock.
+            row = self._conn.execute(
+                "SELECT result FROM applied WHERE key = ?", (key,)
+            ).fetchone()
+            return EffectOutcome(result=json.loads(row[0]), deduplicated=True)
+        return EffectOutcome(result=result, deduplicated=False)
+
+    def applications(self) -> dict[str, int]:
+        """key -> 1 for every key that has been applied.
+
+        Counts rows rather than calls, which is the point: the table cannot
+        hold two rows for one key, so reading it back after a process death
+        answers "how many times did this effect actually apply".
+        """
+        return {
+            k: 1 for (k,) in self._conn.execute("SELECT key FROM applied")
+        }
+
+    def close(self) -> None:
+        self._conn.close()
+
+
 @dataclass
 class FlakySink(EffectSink):
     """Wraps a sink and fails the first ``failures`` attempts per key.
