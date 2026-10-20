@@ -1,0 +1,30 @@
+# Render free tier: one web service serving both the API and the console, so
+# there is no second origin, no CORS, and only one service drawing on the free
+# 750 instance-hours (which are shared across the whole workspace, not per
+# service).
+#
+# REVENANT_STORE=sqlite with the file under /tmp is deliberate. The free disk
+# is ephemeral, so a restart loses the runs -- and for this demo that is the
+# honest default rather than a surprise: the point readers come for is
+# crash-and-recover inside a session, and a Mongo URI can be set in the
+# dashboard if durable runs are wanted (see "Deploying" in the README).
+#
+# No model key is set. Without one the runtime uses its scripted model, which
+# is what makes the public link a working demo instead of a 502, and means the
+# deployed instance cannot spend money.
+services:
+  - type: web
+    name: revenant
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -e .
+    startCommand: uvicorn revenant.api.app:app --app-dir src --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: REVENANT_STORE
+        value: sqlite
+      - key: REVENANT_DB
+        value: /tmp/revenant.db
