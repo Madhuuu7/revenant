@@ -46,3 +46,22 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: python scripts/sweep.py
+
+  console:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      # A type error is a blank console in production and the Python suite
+      # cannot see it.
+      - run: npm run build
+        working-directory: web

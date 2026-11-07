@@ -26,6 +26,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..events import Event
@@ -39,6 +40,10 @@ from ..store.base import ConcurrencyError
 from ..workflows import COSTLY_EFFECTS, REGISTRY, SAMPLE_INPUTS, demo_sink
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
+#: The built console. Vite emits here; a checkout that has never run the
+#: build has no dist, and the root route says how to make one rather than
+#: serving the raw sources, which are TypeScript the browser cannot run.
+CONSOLE_DIR = WEB_DIR / "dist"
 
 app = FastAPI(
     title="revenant",
@@ -446,7 +451,23 @@ def sweep(workflow: str | None = None) -> dict[str, Any]:
 
 @app.get("/")
 def console() -> FileResponse:
-    index = WEB_DIR / "index.html"
+    index = CONSOLE_DIR / "index.html"
     if not index.exists():  # pragma: no cover - deploy sanity
-        raise HTTPException(404, "console not built")
+        raise HTTPException(
+            404,
+            "console not built; run `npm --prefix web install && "
+            "npm --prefix web run build`",
+        )
     return FileResponse(index)
+
+
+# Mounted after every route above, so the API wins and only unmatched paths
+# reach the console's assets.
+if (CONSOLE_DIR / "assets").is_dir():
+    app.mount(
+        "/assets", StaticFiles(directory=CONSOLE_DIR / "assets"), name="assets"
+    )
+if (CONSOLE_DIR / "fonts").is_dir():
+    # Served from this origin rather than a font host: a recovery console is
+    # opened when something has already gone wrong.
+    app.mount("/fonts", StaticFiles(directory=CONSOLE_DIR / "fonts"), name="fonts")

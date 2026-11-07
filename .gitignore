@@ -8,3 +8,9 @@ __pycache__/
 *.sqlite
 runs/
 *.egg-info/
+
+# SQLite keeps its write-ahead log beside the database; both are local
+# state and neither belongs in the repository.
+*.db
+*.db-wal
+*.db-shm
