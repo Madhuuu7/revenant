@@ -158,6 +158,34 @@ def test_crash_at_zero_is_rejected_by_validation(client):
 
 
 def test_the_console_is_served_from_the_same_origin(client):
+    """The console is a built bundle, and the build is not committed.
+
+    `web/dist` is gitignored, so a fresh checkout -- CI included -- has no
+    console until `npm run build` has run. Asserting 200 unconditionally
+    passed on a machine with a stale dist lying around and failed on CI for
+    a reason that had nothing to do with the runtime. The build is verified
+    by the `console` job; what belongs here is the runtime's half of the
+    contract.
+    """
+    from revenant.api.app import CONSOLE_DIR
+
     resp = client.get("/")
+    if not CONSOLE_DIR.is_dir():
+        pytest.skip(
+            "console not built; run `npm --prefix web install && "
+            "npm --prefix web run build`"
+        )
     assert resp.status_code == 200
     assert "revenant" in resp.text.lower()
+
+
+def test_the_api_answers_even_when_the_console_is_missing(client):
+    """An unbuilt console must not take the runtime down with it.
+
+    A deploy that skipped the npm step should lose its dashboard, not stop
+    recovering runs -- the console is the least important thing this
+    process does.
+    """
+    assert client.get("/health").status_code == 200
+    assert client.get("/workflows").status_code == 200
+    assert client.post("/sweep?workflow=onboarding").status_code == 200
