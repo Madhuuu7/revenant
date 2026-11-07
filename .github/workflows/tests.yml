@@ -1,0 +1,48 @@
+# The suite, on every push.
+#
+# The crash sweep is the project's whole claim, so it runs here as its own
+# job rather than only as one test among 146. It kills the process at every
+# journal boundary across three workflows and checks that each run finishes
+# with identical output, no duplicated external effect and a byte-identical
+# replay. It takes a tenth of a second, so there is no reason not to.
+#
+# MongoJournal is deliberately not exercised here. There is no mongod in
+# this workflow and the README says so plainly; the in-memory and file
+# journals are the CI-tested ones.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  crash-sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: python scripts/sweep.py
