@@ -1,0 +1,127 @@
+# Publish the console as a static page.
+#
+# The console normally talks to the runtime. Published here it has no
+# backend, so it falls back to recordings committed under web/public/demo
+# and says on the page that it is doing so.
+#
+# That is honest for this project in a way it would not be for most. The
+# crash sweep is deterministic: in-memory journals, seeded effects, a fixed
+# boundary order. Every run produces the same 140 results on any machine,
+# so a recording is the output rather than a picture of it. The one thing
+# the static page cannot do is run the sweep now, and it says so instead of
+# timing a file read and calling it a sweep.
+#
+# The point of publishing it is a link that opens instantly, with no cold
+# start and no free-tier instance asleep behind it.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - name: Re-record the sweep from this commit
+        # The recordings are committed so the console works offline, but
+        # publishing them without regenerating would let them drift from
+        # the code. The sweep is deterministic, so this either reproduces
+        # the committed file exactly or the code changed and the page
+        # should show the new result.
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          sys.path.insert(0, "src")
+          from revenant.runtime.sweep import sweep_workflow
+          from revenant.workflows import REGISTRY
+
+          out = {}
+          for name in sorted(REGISTRY):
+              res = sweep_workflow(name)
+              out[name] = {
+                  "events": res.reference.events,
+                  "boundaries": len(res.reference.boundaries),
+                  "scenarios": res.scenarios,
+                  "passed": res.scenarios - len(res.failures),
+                  "never_started": res.never_started,
+                  "resumes": res.resumes,
+                  "dedupe_saves": res.dedupe_saves,
+                  "failures": [
+                      {"boundary": r.boundary.label(), "status": r.final_status,
+                       "notes": r.notes}
+                      for r in res.failures
+                  ],
+                  "hooks": sorted({r.boundary.hook for r in res.reports}),
+                  "rows": [
+                      {"index": r.boundary.index, "hook": r.boundary.hook,
+                       "detail": r.boundary.detail, "status": r.final_status,
+                       "ok": r.ok or r.final_status == "never-started",
+                       "resumes": r.resumes,
+                       "dedupe": any("dedupe" in n for n in r.notes)}
+                      for r in res.reports
+                  ],
+              }
+          total = sum(v["scenarios"] for v in out.values())
+          passed = sum(v["passed"] for v in out.values())
+          if total != passed:
+              raise SystemExit(f"sweep failed: {passed}/{total}")
+          path = pathlib.Path("web/public/demo/sweep.json")
+          path.write_text(
+              json.dumps({"total": total, "passed": passed, "ok": True,
+                          "workflows": out}),
+              encoding="utf-8",
+          )
+          print(f"recorded {passed}/{total}")
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: Build
+        # A project site is served from /<repo>/, so the asset URLs have to
+        # be relative. Every fetch in the console is relative for the same
+        # reason.
+        run: npm run build -- --base=./
+        working-directory: web
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Journal } from "./components/Journal";
 import { Matrix, type Picked } from "./components/Matrix";
 import {
-  lastDurableEvent,
   getJSON,
+  lastDurableEvent,
   type Run,
   type Sweep,
   type WorkflowInfo,
 } from "./lib/api";
+import { detect, read, type Mode } from "./lib/source";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -39,15 +40,24 @@ export default function App() {
   const [note, setNote] = useState<string | null>(null);
   const [sweepKey, setSweepKey] = useState(0);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [mode, setMode] = useState<Mode | null>(null);
 
   const runSweep = useCallback(async () => {
     setBusy(true);
     setNote(null);
     const started = performance.now();
     try {
-      const body = await getJSON<Sweep>("/sweep", { method: "POST" });
+      const where = await detect();
+      setMode(where);
+      const body =
+        where === "live"
+          ? await getJSON<Sweep>("sweep", { method: "POST" })
+          : await read<Sweep>("sweep", "sweep.json");
       setSweep(body);
-      setElapsed(performance.now() - started);
+      // Only time a sweep that actually ran. Timing a file read and
+      // calling it "swept in 0.00s" would be the one dishonest number on
+      // the page.
+      setElapsed(where === "live" ? performance.now() - started : null);
       setSweepKey((k) => k + 1);
       setPicked(null);
     } catch (e) {
@@ -59,7 +69,7 @@ export default function App() {
 
   useEffect(() => {
     void runSweep();
-    getJSON<{ workflows: WorkflowInfo[] }>("/workflows")
+    read<{ workflows: WorkflowInfo[] }>("workflows", "workflows.json")
       .then((b) => setWorkflows(b.workflows))
       .catch(() => undefined);
   }, [runSweep]);
@@ -72,12 +82,16 @@ export default function App() {
     if (!wantRun) return;
     if (run?.workflow === wantRun) return;
     let live = true;
-    getJSON<{ run_id: string }>("/runs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workflow: wantRun }),
-    })
-      .then((created) => getJSON<Run>(`/runs/${created.run_id}`))
+    detect()
+      .then((where) =>
+        where === "live"
+          ? getJSON<{ run_id: string }>("runs", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ workflow: wantRun }),
+            }).then((created) => getJSON<Run>(`runs/${created.run_id}`))
+          : read<Run>(`runs/${wantRun}`, `run-${wantRun}.json`),
+      )
       .then((full) => {
         if (live) setRun(full);
       })
@@ -119,7 +133,11 @@ export default function App() {
         </p>
         <div className="controls">
           <button className="go" onClick={() => void runSweep()} disabled={busy}>
-            {busy ? "crashing…" : "Crash it everywhere"}
+            {busy
+              ? "crashing…"
+              : mode === "recorded"
+                ? "Reload the recorded sweep"
+                : "Crash it everywhere"}
           </button>
           <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? "Light" : "Dark"}
@@ -130,6 +148,19 @@ export default function App() {
       {note && (
         <p className="state err" style={{ marginBottom: 20 }}>
           {note}
+        </p>
+      )}
+
+      {mode === "recorded" && (
+        <p className="state" style={{ marginBottom: 22 }}>
+          <b>This is a recording.</b> There is no runtime behind this page,
+          so the numbers below came from a real sweep rather than one that
+          just ran. They are the same numbers either way — the sweep is
+          deterministic, with in-memory journals and a fixed boundary
+          order, so every run produces these 140 results. What you cannot
+          do here is crash it yourself:{" "}
+          <code>uvicorn revenant.api.app:app --app-dir src</code> gives you
+          the live one.
         </p>
       )}
 
@@ -238,7 +269,9 @@ export default function App() {
               <span className="v">
                 {elapsed === null ? "—" : `${(elapsed / 1000).toFixed(2)}s`}
               </span>
-              <span className="k">to sweep</span>
+              <span className="k">
+                {elapsed === null ? "not run here" : "to sweep"}
+              </span>
             </div>
           </div>
         </section>
