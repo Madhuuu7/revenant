@@ -19,9 +19,9 @@ export default function App() {
       /* private window */
     }
     return typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: light)").matches
-      ? "light"
-      : "dark";
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   });
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -75,7 +75,7 @@ export default function App() {
   }, [runSweep]);
 
   // A real run of whichever workflow the selected crash belongs to, so the
-  // journal below the matrix is that workflow's actual log rather than a
+  // log below the strips is that workflow's actual journal rather than a
   // generic example.
   const wantRun = picked?.workflow ?? workflows[0]?.name ?? null;
   useEffect(() => {
@@ -123,185 +123,196 @@ export default function App() {
 
   return (
     <div className="shell">
-      <header className="top">
-        <h1>revenant</h1>
-        <p>
-          An agent run is an append-only event log, and a crash is a cursor
-          position in it. Kill the process anywhere and the run finishes
-          itself — without repeating what it had already done to the outside
-          world.
-        </p>
-        <div className="controls">
-          <button className="go" onClick={() => void runSweep()} disabled={busy}>
-            {busy
-              ? "crashing…"
-              : mode === "recorded"
-                ? "Reload the recorded sweep"
-                : "Crash it everywhere"}
-          </button>
-          <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-            {theme === "dark" ? "Light" : "Dark"}
-          </button>
-        </div>
-      </header>
-
-      {note && (
-        <p className="state err" style={{ marginBottom: 20 }}>
-          {note}
-        </p>
-      )}
-
-      {mode === "recorded" && (
-        <p className="state" style={{ marginBottom: 22 }}>
-          <b>This is a recording.</b> There is no runtime behind this page,
-          so the numbers below came from a real sweep rather than one that
-          just ran. They are the same numbers either way — the sweep is
-          deterministic, with in-memory journals and a fixed boundary
-          order, so every run produces these 140 results. What you cannot
-          do here is crash it yourself:{" "}
-          <code>uvicorn revenant.api.app:app --app-dir src</code> gives you
-          the live one.
-        </p>
-      )}
-
-      {totals && (
-        <div className="verdict">
-          <span className={`big${sweep && !sweep.ok ? " bad" : ""}`}>
-            {totals.passed}/{totals.scenarios}
-          </span>
-          <span className="says">
-            crash scenarios recovered — one for every journal boundary across{" "}
-            {totals.workflows} workflows, with <b>{totals.dedupe}</b> of them
-            landing in the window where the effect had already reached the
-            outside world and the log did not know.
-            {elapsed !== null && ` Swept in ${(elapsed / 1000).toFixed(2)}s.`}
-          </span>
-        </div>
-      )}
-
-      <section>
-        <h2>Every place it can die</h2>
-        <p className="sub">
-          One square per journal boundary. The sweep killed the process at
-          each one and restarted it; the colour is what came back. Click any
-          square to see where in the log it happened.
-        </p>
-        {sweep ? (
-          <Matrix
-            workflows={sweep.workflows}
-            picked={picked}
-            onPick={(workflow, row) => setPicked({ workflow, row })}
-            animateKey={sweepKey}
-          />
-        ) : (
-          <p className="state">Sweeping.</p>
-        )}
-
-        {picked && (
-          <div
-            className={`picked-detail${
-              picked.row.dedupe
-                ? " dedupe"
-                : picked.row.status === "never-started"
-                  ? " idle"
-                  : ""
-            }`}
-          >
-            <p style={{ margin: 0 }}>
-              <span className="mono">
-                #{picked.row.index} {picked.row.hook} · {picked.row.detail}
-              </span>
-            </p>
-            <p style={{ margin: "6px 0 0" }}>
-              {picked.row.status === "never-started" ? (
-                <>
-                  The process died before anything was written, so there was{" "}
-                  <b>nothing to recover</b> — and nothing had happened to the
-                  outside world either. This is the one boundary where doing
-                  nothing is correct.
-                </>
-              ) : picked.row.dedupe ? (
-                <>
-                  Recovered after <b>{picked.row.resumes}</b> resume
-                  {picked.row.resumes === 1 ? "" : "s"}, and the effect was{" "}
-                  <b>recognised rather than repeated</b>. The process died
-                  between the effect reaching the world and the log recording
-                  it, which is the case naive recovery charges the card twice
-                  for.
-                </>
-              ) : (
-                <>
-                  Recovered after <b>{picked.row.resumes}</b> resume
-                  {picked.row.resumes === 1 ? "" : "s"}, with the same output
-                  as an uninterrupted run and a byte-identical log.
-                </>
-              )}
-            </p>
+      <article className="sheet">
+        <header className="letterhead">
+          <div>
+            <h1>revenant</h1>
+            <p className="standing">A register of crashes and returns</p>
           </div>
-        )}
-      </section>
-
-      {totals && (
-        <section>
-          <h2>The sweep</h2>
-          <div className="tiles">
-            <div>
-              <span className="v">{totals.scenarios}</span>
-              <span className="k">crash points</span>
-            </div>
-            <div>
-              <span className="v">{totals.passed}</span>
-              <span className="k">recovered</span>
-            </div>
-            <div>
-              <span className="v">{totals.dedupe}</span>
-              <span className="k">saved by dedupe</span>
-            </div>
-            <div>
-              <span className="v">{totals.resumes}</span>
-              <span className="k">resumes</span>
-            </div>
-            <div>
-              <span className="v">{totals.neverStarted}</span>
-              <span className="k">never started</span>
-            </div>
-            <div>
-              <span className="v">
-                {elapsed === null ? "—" : `${(elapsed / 1000).toFixed(2)}s`}
-              </span>
-              <span className="k">
-                {elapsed === null ? "not run here" : "to sweep"}
-              </span>
-            </div>
+          <div className="controls">
+            <button
+              className="go"
+              onClick={() => void runSweep()}
+              disabled={busy}
+            >
+              {busy
+                ? "crashing…"
+                : mode === "recorded"
+                  ? "Reload the register"
+                  : "Crash it everywhere"}
+            </button>
+            <button
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
           </div>
-        </section>
-      )}
+          <p className="brief">
+            An agent run is an append-only event log, and a crash is a cursor
+            position in it. Kill the process anywhere and the run finishes
+            itself — without repeating what it had already done to the outside
+            world.
+          </p>
+        </header>
 
-      <section>
-        <h2>
-          The log{run ? ` — ${run.workflow}` : ""}
-          {picked ? ", with the crash marked" : ""}
-        </h2>
-        <p className="sub">
-          A real run of this workflow, one line per event. Everything above
-          the marker was durable when the process died; everything below it
-          was written by the resumed run.
-        </p>
-        <Journal entries={run?.timeline ?? []} durableThrough={durableThrough} />
-        {run?.output && (
-          <p className="sub" style={{ marginTop: 14 }}>
-            Output:{" "}
-            <code>{JSON.stringify(run.output)}</code>
+        {note && <p className="note err">{note}</p>}
+
+        {mode === "recorded" && (
+          <p className="note">
+            <b>This register was recorded, not kept live.</b> There is no
+            runtime behind this page, so the marks below came from a real
+            sweep rather than one that just ran. They are the same marks
+            either way — the sweep is deterministic, with in-memory journals
+            and a fixed boundary order, so every run produces these 140
+            results. What you cannot do here is crash it yourself:{" "}
+            <code>uvicorn revenant.api.app:app --app-dir src</code> gives you
+            the live one.
           </p>
         )}
-      </section>
 
-      <footer>
-        The sweep is a test, a CLI and this button. It kills the process at
-        every journal boundary across three workflows, and asserts that each
-        run finishes with the same output as an uninterrupted one, applies no
-        effect twice, and replays byte-identically afterwards.
-      </footer>
+        <section>
+          <h2>Every place it can die</h2>
+          <p className="sub">
+            One mark per journal boundary, in the order the run reaches them.
+            The sweep killed the process at each one and restarted it; the
+            colour is what came back. Click any mark to read the entry made
+            against it.
+          </p>
+          {sweep ? (
+            <Matrix
+              workflows={sweep.workflows}
+              picked={picked}
+              onPick={(workflow, row) => setPicked({ workflow, row })}
+              animateKey={sweepKey}
+            />
+          ) : (
+            <p className="state">Sweeping.</p>
+          )}
+
+          {totals && (
+            <p className="verdict">
+              <span className={`count${sweep && !sweep.ok ? " bad" : ""}`}>
+                {totals.passed}/{totals.scenarios}
+              </span>{" "}
+              returned with the same output as an uninterrupted run, across{" "}
+              {totals.workflows} workflows. <b>{totals.dedupe}</b> of them died
+              in the window where the effect had already reached the outside
+              world and the log did not know yet — the case naive recovery
+              charges the card twice for.
+              {elapsed !== null && ` Swept in ${(elapsed / 1000).toFixed(2)}s.`}
+            </p>
+          )}
+
+          {picked && (
+            <div
+              className={`entry-note${
+                picked.row.dedupe
+                  ? " dedupe"
+                  : picked.row.status === "never-started"
+                    ? " unborn"
+                    : ""
+              }`}
+            >
+              <span className="where">
+                #{picked.row.index} {picked.row.hook} — {picked.row.detail}
+              </span>
+              <p>
+                {picked.row.status === "never-started" ? (
+                  <>
+                    The process died before anything was written, so there was{" "}
+                    <b>nothing to recover</b> — and nothing had happened to the
+                    outside world either. This is the one boundary where doing
+                    nothing is correct.
+                  </>
+                ) : picked.row.dedupe ? (
+                  <>
+                    Returned after <b>{picked.row.resumes}</b> resume
+                    {picked.row.resumes === 1 ? "" : "s"}, and the effect was{" "}
+                    <b>recognised rather than repeated</b>. The process died
+                    between the effect reaching the world and the log recording
+                    it, which is the case naive recovery charges the card twice
+                    for.
+                  </>
+                ) : (
+                  <>
+                    Returned after <b>{picked.row.resumes}</b> resume
+                    {picked.row.resumes === 1 ? "" : "s"}, with the same output
+                    as an uninterrupted run and a byte-identical log.
+                  </>
+                )}
+              </p>
+            </div>
+          )}
+        </section>
+
+        {totals && (
+          <section>
+            <h2>The footing</h2>
+            <p className="sub">
+              What the sweep counted, once every mark above was made.
+            </p>
+            <div className="footing">
+              <div>
+                <span className="v">{totals.scenarios}</span>
+                <span className="k">places to die</span>
+              </div>
+              <div>
+                <span className="v">{totals.passed}</span>
+                <span className="k">returned</span>
+              </div>
+              <div>
+                <span className="v">{totals.dedupe}</span>
+                <span className="k">already paid</span>
+              </div>
+              <div>
+                <span className="v">{totals.resumes}</span>
+                <span className="k">resumes</span>
+              </div>
+              <div>
+                <span className="v">{totals.neverStarted}</span>
+                <span className="k">never started</span>
+              </div>
+              <div>
+                <span className="v">
+                  {elapsed === null ? "—" : `${(elapsed / 1000).toFixed(2)}s`}
+                </span>
+                <span className="k">
+                  {elapsed === null ? "not run here" : "to sweep"}
+                </span>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section>
+          <h2>
+            The log{run ? ` — ${run.workflow}` : ""}
+            {picked ? ", with the crash ruled in" : ""}
+          </h2>
+          <p className="sub">
+            A real run of this workflow, one line per event. Everything above
+            the rule was durable when the process died; everything below it was
+            written by the resumed run.
+          </p>
+          <Journal
+            entries={run?.timeline ?? []}
+            durableThrough={durableThrough}
+          />
+          {run?.output && (
+            <p className="output">
+              It finished with <code>{JSON.stringify(run.output)}</code>, and so
+              did every crashed run of it.
+            </p>
+          )}
+        </section>
+
+        <footer>
+          The sweep is a test, a CLI and this button. It kills the process at
+          every journal boundary across three workflows, and asserts that each
+          run finishes with the same output as an uninterrupted one, applies no
+          effect twice, and replays byte-identically afterwards.
+        </footer>
+      </article>
     </div>
   );
 }

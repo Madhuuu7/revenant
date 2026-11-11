@@ -1,17 +1,27 @@
-/* The journal: the append-only log a run actually wrote.
+/* The log: the append-only journal a run actually wrote.
  *
  * The runtime's whole model is that a run is this list and a crash is a
- * position in it, so the console shows the list rather than a summary of
- * it. When a crash boundary is selected in the matrix above, the line it
- * happened at is marked here — everything above it was durable, everything
+ * position in it, so the register shows the list rather than a summary of
+ * it. When a mark is chosen in the strips above, the line the crash
+ * happened at is ruled here — everything above it was durable, everything
  * below was written by the resumed process.
  *
- * Two tags carry the weight. `costly` marks an effect that spends money,
- * which is the reason exactly-once matters at all; `deduplicated` marks one
- * that recovery recognised instead of repeating.
+ * Two tags carry the weight. "spends money" marks an effect that costs
+ * something in the outside world, which is the reason exactly-once matters
+ * at all; "not repeated" marks one that recovery recognised instead of
+ * doing again.
  */
 
 import type { TimelineEntry } from "../lib/api";
+
+function CrashLine({ said }: { said: string }) {
+  return (
+    <div className="crashline">
+      <span className="said">{said}</span>
+      <div className="bar" />
+    </div>
+  );
+}
 
 export function Journal({
   entries,
@@ -33,17 +43,12 @@ export function Journal({
   return (
     <div className="journal">
       {durableThrough === 0 && (
-        <div className="crashline">
-          <span />
-          <div className="bar">
-            <span>process killed before the first event was written</span>
-          </div>
-        </div>
+        <CrashLine said="killed before the first event was written" />
       )}
       {entries.map((e) => (
         <div key={e.seq}>
           <div
-            className={`entry${
+            className={`line${
               durableThrough !== null && e.seq > durableThrough ? " resumed" : ""
             }`}
           >
@@ -58,14 +63,7 @@ export function Journal({
             </span>
           </div>
           {durableThrough === e.seq && (
-            <div className="crashline">
-              <span />
-              <div className="bar">
-                <span>
-                  process killed here — everything below is the resume
-                </span>
-              </div>
-            </div>
+            <CrashLine said="killed here — everything below is the resume" />
           )}
         </div>
       ))}
