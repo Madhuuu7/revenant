@@ -17,7 +17,8 @@ what comes out.**
 ```
 
 That sweep runs in 0.10 s, so it is a test (`tests/test_sweep.py`), a CLI
-(`scripts/sweep.py`), and a button in the console. 146 tests in all.
+(`scripts/sweep.py`), and a button in the console. 147 Python tests in all,
+plus 16 for the console.
 
 ---
 
@@ -124,7 +125,7 @@ python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"
 
 python scripts/sweep.py                 # the 140 scenarios, ~0.1 s
 python scripts/sweep.py --workflow triage --verbose
-python -m pytest                        # 146 tests
+python -m pytest                        # 147 tests
 python scripts/bench.py                 # the journal numbers quoted below
 
 uvicorn revenant.api.app:app --app-dir src --port 8099
@@ -133,28 +134,29 @@ uvicorn revenant.api.app:app --app-dir src --port 8099
 
 ### The console
 
-Served from the same origin as the API at `/`. The log *is* the interface:
+A React page built with Vite, served from the same origin as the API at `/`.
+It is drawn as the document the sweep produces — a register of crashes and
+returns, on ruled stock — rather than a dashboard:
 
-- **the event tape**, one row per event, each carrying its group's colour and
-  glyph, with a **draggable replay cursor** — the readout above it is a fold
-  over the prefix of the log, which is exactly what the runtime does on a
-  resume, so moving the cursor *is* watching a replay;
-- **a crash picker**: choose any boundary the sweep tests and break the run
-  there on purpose. A durability feature you cannot trigger on demand is a
-  README claim; one that is a button is something a reader can disprove in ten
-  seconds. The default selection is the nastiest window — after the effect
-  landed, before the journal learned of it;
-- **the tear**, drawn across the tape where the process died, and the resume
-  that rejoins it;
-- **the effect ledger**, one row per idempotency key, where `applied` can only
-  ever read 1;
-- **the fault sweep**, as a 140-cell matrix painted from each scenario's own
-  result.
+- **the strips**: one pen mark per journal boundary, in the order the run
+  reaches them, coloured by what came back. The claim is a count, so the page
+  is a thing you can count. Violet marks the twenty boundaries inside the
+  window where the effect had already reached the outside world and the log
+  did not know yet; a half-height ochre mark is a boundary where nothing had
+  been written, so there was nothing to recover;
+- **the entry**, written against whichever mark you click, saying how many
+  resumes it took and whether the effect was recognised rather than repeated;
+- **the footing**, the sweep's own totals;
+- **the log**, the journal a real run of that workflow wrote, with the crash
+  ruled across it — above the rule is what was durable, below it is the
+  resume. An intent and an observation are coloured as the two sides of the
+  dedupe window, because a crash between them is the only hard case.
 
-`node scripts/check_console.mjs http://127.0.0.1:8099` runs the page's own
-`<script>` against a stub DOM pointed at a live server — 35 assertions, no
-browser. It earned its place by catching `r.append(x).append(y)`, which reads
-fine and throws in a browser because `Element.append` returns `undefined`.
+Published without a runtime behind it — on Pages — the page reads the
+recordings under `web/public/demo` and says on itself that it is doing so.
+The sweep is deterministic, so the recording is the output rather than a
+picture of one; the only thing the static page cannot do is sweep on demand,
+and it declines to time a file read and call that a sweep.
 
 ## API
 
@@ -243,6 +245,6 @@ src/revenant/
     model.py         scripted and HTTP models
   workflows/         three workflows that fail in different ways
   api/app.py         FastAPI, serving the console from the same origin
-web/index.html       the console, one file, no build step
-scripts/             sweep, bench, and the headless console harness
+web/                 the console: React + Vite, self-hosted fonts, recordings
+scripts/             sweep and bench
 ```
