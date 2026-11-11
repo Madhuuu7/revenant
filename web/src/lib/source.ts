@@ -21,25 +21,37 @@
 export type Mode = "live" | "recorded";
 
 let resolved: Mode | null = null;
+// The promise, not only the answer. Every view asks on first paint, and
+// they all ask before any of them has an answer to cache -- so a page with
+// six panels fired six probes at a dead endpoint and left six 404s in the
+// console of anyone who opened it.
+let asking: Promise<Mode> | null = null;
 
 /** Ask the runtime whether it is there. */
 export async function detect(): Promise<Mode> {
   if (resolved) return resolved;
-  try {
-    const response = await fetch("health", {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(4000),
-    });
-    resolved = response.ok ? "live" : "recorded";
-  } catch {
-    resolved = "recorded";
+  if (!asking) {
+    asking = (async () => {
+      try {
+        const response = await fetch("health", {
+          headers: { accept: "application/json" },
+          signal: AbortSignal.timeout(4000),
+        });
+        resolved = response.ok ? "live" : "recorded";
+      } catch {
+        resolved = "recorded";
+      }
+      asking = null;
+      return resolved;
+    })();
   }
-  return resolved;
+  return asking;
 }
 
 /** Force a mode, for tests. */
 export function setMode(mode: Mode | null): void {
   resolved = mode;
+  asking = null;
 }
 
 /**

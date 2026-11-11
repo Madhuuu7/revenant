@@ -49,6 +49,28 @@ describe("deciding where the data comes from", () => {
     // feel broken instead of static.
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  it("probes once when every panel asks in the same paint", async () => {
+    // The test above awaits each call, so the answer is already cached by
+    // the second one and it passes whether or not the probe is shared.
+    // What a page actually does is mount its panels together, so they all
+    // ask before any of them has an answer -- which fired one request per
+    // panel at an endpoint already known to be dead, and left that many
+    // 404s in the console of anyone who opened the published page.
+    let started = 0;
+    const spy = vi.fn(() => {
+      started += 1;
+      return new Promise<Response>((resolve) =>
+        setTimeout(() => resolve(ok({ status: "ok" })), 10),
+      );
+    });
+    vi.stubGlobal("fetch", spy);
+    const answers = await Promise.all([
+      detect(), detect(), detect(), detect(), detect(), detect(),
+    ]);
+    expect(started).toBe(1);
+    expect(answers).toEqual(Array(6).fill("live"));
+  });
 });
 
 describe("reading", () => {
